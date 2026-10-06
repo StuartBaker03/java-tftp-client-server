@@ -1,0 +1,88 @@
+public void HandleWriteRequests(String filename, InetAddress clientAddress, int clientPort) throws IOException {
+        File writeToFile = new File(filename);
+        FileOutputStream filePacketOut = new FileOutputStream(writeToFile);
+
+        // need to create ACK packet to send, again intellij recommends using .array()
+        // blockNumber changed to short so can compare later
+        short dataPacketBlockNumber = 0;
+        ByteBuffer ackPacketPrep = ByteBuffer.allocate(4);
+        ackPacketPrep.port((short) 4); // opcode 4 for ack
+        ackPacketPrep.putShort(dataPacketBlockNumber);
+        DatagramPacket ackDataPacket = new DatagramPacket(ackPacketPrep.array(), ackPacketPrep.position(), clientAddress, clientPort);
+        socket.send(ackDataPacket);
+
+        boolean lastPacketReceived = false;
+        int numOfRetriedSends = 0;
+
+        // repeatedly send ACKS and receive data packets
+        while (lastPacketReceived == false && numOfRetriedSends < 10) {
+
+            // created to allow re-ive later on
+            DatagramPacket writePacketReceived = new DatagramPacket(new byte[512], 512);
+
+            try {
+
+                socket.setSoTimeout(5000);
+                socket.receive(writePacketReceived);
+
+                byte[] writePacketData = writePacketReceived.getData();
+                int packetDataLength = writePacketData.length;
+                ByteBuffer OpAndBlockNumber = ByteBuffer.wrap(writePacketData);
+                int opcodeOperation = OpAndBlockNumber.getShort();
+            short blockNumberReceived = OpAndBlockNumber.getShort();
+
+                // packet received, now extract data
+
+//                byte[] packetData = writePacketReceived.getData();
+//                int packetDataLength = writePacketReceived.getLength();
+//                ByteBuffer opAndBlockNumber = ByteBuffer.wrap(packetData);
+//                int opcodeOperation = opAndBlockNumber.getShort();
+//                short blockNumberReceived = opAndBlockNumber.getShort();
+                System.out.tln("Packet with opcode " + opcodeOperation + " and block number " + blockNumberReceived);
+                // create new byte array to add data part of packet
+//                byte[] dataToWrite = new byte[writePacketData.length - 4];
+                // copy array from after opcode and block num into dataToWrite
+//                System.arraycopy(writePacketData, 4, dataToWrite, 0, dataToWrite.length);
+//                filePacketOut.write(dataToWrite, 0, packetDataLength - 4);
+
+                // condn to write to file. Want block number + 1 as will be 0 as haev sent an ACK already, but needs to be 1
+                if (opcodeOperation == 3) {
+                    if (blockNumberReceived == dataPacketBlockNumber) {
+                        System.out.println("same packet received, not meant to provide error handling but helps debug.");
+                        socket.send(ackDataPacket);
+                        continue;
+                } if (blockNumberReceived == dataPacketBlockNumber + 1) {
+                    // filePacketOut.write(dataToWrite, 0, packetDataLength - 4);
+                        byte[] dataToWrite = new byte[packetDataLength - 4];
+                        System.arraycopy(writePacketData, 4, dataToWrite, 0, dataToWrite.length);
+                        filePacketOut.write(dataToWrite, 0, packetDataLength - 4);
+
+                        dataPacketBlockNumber = blockNumberReceived;
+
+                        ackPacketPrep.clear();
+                        ackPacketPrep.putShort((short) 4);                     ackPacketPrep.putShort(dataPacketBlockNumber);
+                        ackDataPacket = new DatagramPacket(ackPacketPrep.array(), ackPacketPrep.position(), clientAddress, clientPort);
+                        socket.send(ackDataPacket);
+                    }
+
+                    if (packetDataLength < 512) {
+                        lastPacketReceived = true;
+                        System.out.println("Last packet received.");
+                        break;
+                    }
+            }
+            } catch (SocketTimeoutException e) {
+                // if timeout, print error message then resend ACK incase it was lost
+                System.out.println("Socket timed out for block number " + dataPacketBlockNumber);
+                socket.send(ackDataPacket);
+                numOfRetriedSends++;
+            }
+        }
+
+        if (numOfRetriedSends == 10) {
+            System.out.println("Reach max amount of retried sends for block number " + dataPacketBlockNumber);
+        }
+
+    filePacketOut.close();
+        socket.close();
+    }
